@@ -1,0 +1,38 @@
+@extends('layouts.admin')
+
+@section('content')
+<div class="container">
+  <h1 class="mb-4">Edit Category: {{ $category->name }}</h1>
+
+  @if ($errors->any())
+    <div class="alert alert-danger">
+      <ul class="mb-0">
+        @foreach ($errors->all() as $error)
+          <li>{{ $error }}</li>
+        @endforeach
+      </ul>
+    </div>
+  @endif
+
+  <form action="{{ route('categories.update', $category->id) }}" method="POST" novalidate>
+    @csrf
+    @method('PUT')
+
+    <div class="mb-3">
+      <label for="name" class="form-label">Category Name <span class="text-danger">*</span></label>
+      <input type="text" name="name" id="name"
+             class="form-control @error('name') is-invalid @enderror"
+             value="{{ old('name', $category->name) }}"
+             required
+             maxlength="255"
+      >
+      @error('name')
+        <div class="invalid-feedback">{{ $message }}</div>
+      @enderror
+    </div>
+
+    <button type="submit" class="btn btn-success">Update Category</button>
+    <a href="{{ route('categories.index') }}" class="btn btn-secondary ms-2">Cancel</a>
+  </form>
+</div>
+@endsection

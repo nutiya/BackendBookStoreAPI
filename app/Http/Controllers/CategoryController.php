@@ -10,20 +10,13 @@ class CategoryController extends Controller
 {
     public function index()
     {
-        $categories = Category::all();
-
-        return response()->json([
-            'success' => true,
-            'data' => $categories
-        ]);
+        return response()->json(Category::all());
     }
 
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'image_url' => 'nullable|url',
         ]);
 
         if ($validator->fails()) {
@@ -34,7 +27,9 @@ class CategoryController extends Controller
             ], 422);
         }
 
-        $category = Category::create($request->all());
+        $category = Category::create([
+            'name' => $request->name
+        ]);
 
         return response()->json([
             'success' => true,
@@ -42,4 +37,6 @@ class CategoryController extends Controller
             'data' => $category
         ], 201);
     }
+
+    // Optionally add update, show, and delete methods
 }

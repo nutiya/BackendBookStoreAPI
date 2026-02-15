@@ -2,130 +2,120 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\OrderItem;
-use App\Models\Book;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Auth;
+use App\Mail\OrderPlaced;
+use Illuminate\Support\Facades\Mail;
+
 
 class OrderController extends Controller
 {
-    public function index(Request $request)
-    {
-        $orders = $request->user()
-                         ->orders()
-                         ->with(['orderItems.book'])
-                         ->orderBy('created_at', 'desc')
-                         ->get();
+public function placeOrder(Request $request)
+{
+    $user = Auth::user(); 
 
-        return response()->json([
-            'success' => true,
-            'data' => $orders
-        ]);
+    // Validate required fields
+    $request->validate([
+        'shipping_address' => 'required|string',
+        'payment_method' => 'required|string',
+        'order_note' => 'nullable|string',
+    ]);
+
+    // Get cart items for the user
+    $cartItems = CartItem::with('book')->where('user_id', $user->id)->get();
+
+    if ($cartItems->isEmpty()) {
+        return response()->json(['message' => 'Your cart is empty'], 400);
     }
 
-    public function store(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'items' => 'required|array|min:1',
-            'items.*.book_id' => 'required|exists:books,id',
-            'items.*.quantity' => 'required|integer|min:1',
-            'shipping_address' => 'required|string|max:500',
-            'payment_method' => 'required|string|in:cash_on_delivery,credit_card,paypal',
+    // Calculate total amount
+    $totalAmount = $cartItems->sum(function ($item) {
+        return $item->book->price * $item->quantity;
+    });
+
+    DB::beginTransaction();
+
+    try {
+        // Create order
+        $order = Order::create([
+            'user_id' => $user->id,
+            'total_amount' => $totalAmount,
+            'shipping_address' => $request->shipping_address,
+            'payment_method' => $request->payment_method,
+            'order_note' => $request->order_note,
         ]);
 
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation errors',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        DB::beginTransaction();
-
-        try {
-            $totalAmount = 0;
-            $orderItems = [];
-
-            // Calculate total and prepare order items
-            foreach ($request->items as $item) {
-                $book = Book::find($item['book_id']);
-                
-                if ($book->stock_quantity < $item['quantity']) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => "Insufficient stock for book: {$book->title}"
-                    ], 400);
-                }
-
-                $itemTotal = $book->price * $item['quantity'];
-                $totalAmount += $itemTotal;
-
-                $orderItems[] = [
-                    'book_id' => $book->id,
-                    'quantity' => $item['quantity'],
-                    'price' => $book->price,
-                ];
-
-                // Update stock
-                $book->decrement('stock_quantity', $item['quantity']);
-                $book->increment('sold_count', $item['quantity']);
-            }
-
-            // Create order
-            $order = Order::create([
-                'user_id' => $request->user()->id,
-                'total_amount' => $totalAmount,
-                'status' => 'pending',
-                'shipping_address' => $request->shipping_address,
-                'payment_method' => $request->payment_method,
+        // Create order items + update book stock & sold count
+        foreach ($cartItems as $item) {
+            OrderItem::create([
+                'order_id' => $order->id,
+                'book_id' => $item->book_id,
+                'quantity' => $item->quantity,
+                'price' => $item->book->price, // snapshot price
             ]);
 
-            // Create order items
-            foreach ($orderItems as $item) {
-                $item['order_id'] = $order->id;
-                OrderItem::create($item);
+            // Update book stock and sold count
+            $book = $item->book;
+            $book->sold_count += $item->quantity;
+            $book->stock_quantity -= $item->quantity;
+
+            // Ensure stock does not go below zero
+            if ($book->stock_quantity < 0) {
+                DB::rollBack();
+                return response()->json([
+                    'message' => "Not enough stock for '{$book->title}'"
+                ], 400);
             }
 
-            DB::commit();
-
-            $order->load(['orderItems.book']);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Order created successfully',
-                'data' => $order
-            ], 201);
-
-        } catch (\Exception $e) {
-            DB::rollback();
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to create order'
-            ], 500);
+            $book->save();
         }
-    }
 
-    public function show(Request $request, $id)
-    {
-        $order = $request->user()
-                        ->orders()
-                        ->with(['orderItems.book'])
-                        ->find($id);
+        $order->load('orderItems.book', 'user');
 
-        if (!$order) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Order not found'
-            ], 404);
-        }
+        // Send order placed email
+        Mail::to($order->user->email)->send(new OrderPlaced($order));
+
+        // Clear user's cart
+        CartItem::where('user_id', $user->id)->delete();
+
+        DB::commit();
 
         return response()->json([
-            'success' => true,
-            'data' => $order
+            'message' => 'Order placed successfully',
+            'order_id' => $order->id,
         ]);
+
+    } catch (\Exception $e) {
+        DB::rollBack();
+        return response()->json([
+            'message' => 'Failed to place order',
+            'error' => $e->getMessage()
+        ], 500);
     }
+}
+
+
+public function getOrderHistory()
+{
+    $user = Auth::user();
+
+    // Get all orders with order items and related book info
+    $orders = Order::with(['orderItems.book'])
+        ->where('user_id', $user->id)
+        ->orderBy('created_at', 'desc')
+        ->get();
+
+    // Count total number of orders the user has placed
+    $totalOrders = Order::where('user_id', $user->id)->count();
+
+    return response()->json([
+        'orders' => $orders,
+        'total_orders' => $totalOrders
+    ]);
+}
+
 }

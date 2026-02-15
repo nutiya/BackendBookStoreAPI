@@ -7,8 +7,11 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Models\Book;
 
-class User extends Authenticatable implements MustVerifyEmail
+
+
+class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
 
@@ -18,6 +21,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'password',
         'phone',
     ];
+    
     protected $hidden = [
         'password',
         'remember_token',
@@ -32,4 +36,27 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         return $this->hasMany(Order::class);
     }
+    public function wishlistBooks()
+    {
+        return $this->belongsToMany(Book::class, 'wishlists')->withTimestamps();
+    }
+    public function cartItems()
+    {
+        return $this->hasMany(CartItem::class);
+    }
+    protected static function booted()
+    {
+        static::deleting(function ($user) {
+            $user->orders()->delete();
+            $user->wishlistBooks()->detach();
+            $user->cartItems()->delete();
+
+
+        });
+    }
+
+
+
+
+
 }

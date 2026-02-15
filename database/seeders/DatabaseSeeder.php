@@ -9,8 +9,13 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call([
-            CategorySeeder::class,
-            BookSeeder::class,
+            AuthorsTableSeeder::class,
+            PublishersTableSeeder::class,
+            LanguagesTableSeeder::class,
+            CategoriesTableSeeder::class,
+            BooksTableSeeder::class,
+            SlideSeeder::class,
+
         ]);
     }
 }

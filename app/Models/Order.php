@@ -12,7 +12,6 @@ class Order extends Model
     protected $fillable = [
         'user_id',
         'total_amount',
-        'status',
         'shipping_address',
         'payment_method',
     ];
@@ -29,5 +28,13 @@ class Order extends Model
     public function orderItems()
     {
         return $this->hasMany(OrderItem::class);
+    }
+
+    protected static function booted()
+    {
+        static::deleting(function ($order) {
+            $order->orderItems()->delete();
+
+        });
     }
 }
